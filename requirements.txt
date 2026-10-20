@@ -6,3 +6,4 @@ matplotlib
 seaborn
 torch==2.2.2
 tqdm
+requests

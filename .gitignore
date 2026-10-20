@@ -8,3 +8,5 @@ __pycache__/
 data/
 checkpoints/
 .env
+work/
+.DS_Store

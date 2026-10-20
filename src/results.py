@@ -146,10 +146,12 @@ def run_metrics(rid, eval_split="test", thr_mode="mcc_cv", subset=None, results_
 
 
 def seed_spread(rid, eval_split="test", thr_mode="mcc_cv", results_dir=None):
-    """Per-seed AUC, as mean / std. Essential at ~127 positives, where a 0.02 AUC
-    gap between configurations is routinely smaller than the seed-to-seed spread."""
+    """Per-seed AUC, as mean / std.
+
+    With a single seed the std is NaN, not 0: there is no spread to measure, and
+    printing 0.0 would read as perfect stability.
+    """
     preds = load_preds(rid, results_dir)
-    cv = preds[preds["split"] == "cv"]
     aucs = []
     for _, g in preds[preds["split"] == eval_split].groupby("seed"):
         r = metrics.ranking_metrics(g["y_true"], g["y_score"])
@@ -157,7 +159,8 @@ def seed_spread(rid, eval_split="test", thr_mode="mcc_cv", results_dir=None):
             aucs.append(r["AUC"])
     if not aucs:
         return {"AUC_mean": float("nan"), "AUC_std": float("nan")}
-    return {"AUC_mean": float(np.mean(aucs)), "AUC_std": float(np.std(aucs))}
+    return {"AUC_mean": float(np.mean(aucs)),
+            "AUC_std": float(np.std(aucs, ddof=1)) if len(aucs) > 1 else float("nan")}
 
 
 def table(exp_id, eval_split="test", thr_mode="mcc_cv", label_col="label",

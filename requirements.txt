@@ -1,3 +1,5 @@
+# Local pins. On Colab, filter this file first (see CLAUDE.md): numpy/scipy/torch
+# must stay at the preinstalled versions or the preinstalled torch breaks.
 numpy<2
 pandas
 scipy
@@ -7,3 +9,5 @@ seaborn
 torch==2.2.2
 tqdm
 requests
+transformers>=4.40
+sentencepiece

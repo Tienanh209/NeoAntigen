@@ -7,6 +7,7 @@ Override with the env vars NEOANTIGEN_DRIVE, DATA_DIR, CKPT_DIR, WORK_DIR.
 import importlib.util
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parents[1]
@@ -21,6 +22,19 @@ CKPT_DIR = Path(os.environ.get("CKPT_DIR", DRIVE_DIR / "ckpt" if ON_COLAB else R
 # Scratch space (CD-HIT files, staged data) lives on the fast local disk, never on Drive
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/content/work" if ON_COLAB else REPO_DIR / "work"))
 STAGED_DATA_DIR = Path("/content/data") if ON_COLAB else DATA_DIR
+
+EMB_DIR = DATA_DIR / "emb"          # PLM embedding caches, one subdir per dataset build
+RESULTS_DIR = CKPT_DIR / "results"  # experiment runs, predictions, figures
+
+
+def git_sha():
+    """Short commit of the checked-out code, recorded with every run. '' if git is unavailable."""
+    try:
+        out = subprocess.run(["git", "-C", str(REPO_DIR), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
 
 def stage_data():

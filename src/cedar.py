@@ -17,7 +17,6 @@ LIST_COLS = ["qualitative_measures", "disease_names", "mhc_classes", "parent_sou
 STD_AA = "[ACDEFGHIKLMNPQRSTVWY]+"
 # Common: linear peptides with T cell assay data (the paper: "T cell epitopes related to melanoma")
 BASE = {"structure_type": "eq.Linear peptide", "tcell_ids": "not.is.null"}
-PAPER = {1: 671, 0: 32206}   # Table 1 of the paper, for comparison
 
 
 def fetch(filters, page=10000):
@@ -109,6 +108,27 @@ def cdhit_filter(df, work_dir, sim_id=0.4, min_len=5):
                        stdout=log, check=True)
     reps = {l[1:].split()[0] for l in open(work / "nr.fa") if l.startswith(">")}
     return df[df["uid"].isin(reps)]
+
+
+def cdhit_clusters(work_dir, clstr_name="nr.fa.clstr"):
+    """Parse CD-HIT's .clstr file into {uid: cluster_id}.
+
+    `cdhit_filter` keeps only one representative per cluster and throws the
+    membership away, but the leakage experiment needs to know which peptides are
+    near-duplicates of each other so they can be kept on the same side of a split.
+    Run `cdhit_filter` first; this reads the file it left behind.
+    """
+    path = Path(work_dir) / clstr_name
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found; run cdhit_filter first")
+    out, cid = {}, -1
+    for line in path.read_text().splitlines():
+        if line.startswith(">Cluster"):
+            cid = int(line.split()[1])
+        elif ">" in line:
+            # e.g.  0\t9aa, >12345_1... *
+            out[line.split(">", 1)[1].split("...")[0]] = cid
+    return out
 
 
 def split(df, test_size=0.2, seed=42):

@@ -89,7 +89,10 @@ def fit(model, train_data, val_data, cfg=None, ckpt_path=None, device=None, verb
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", factor=0.5,
                                                        patience=cfg["lr_patience"])
     use_amp = cfg["amp"] if cfg["amp"] is not None else (device.type == "cuda")
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    try:   # torch >= 2.3
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    except (AttributeError, TypeError):
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     start_epoch, best_auc, best_state, best_epoch, bad, history = 0, -np.inf, None, -1, 0, []
     if ckpt_path and Path(ckpt_path).exists():

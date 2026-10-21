@@ -97,6 +97,22 @@ def load_runs(exp_id=None, results_dir=None):
     return pd.DataFrame(rows)
 
 
+def latest_per_label(runs, label_col="label"):
+    """One run per label, the most recently committed.
+
+    Changing a setting such as the number of seeds changes the config hash, so the
+    same experiment can have several committed runs. A table or ROC plot should
+    show the current one, not every historical attempt under the same name.
+    """
+    if runs.empty:
+        return runs
+    runs = runs.copy()
+    key = runs[label_col].where(runs[label_col].astype(bool), runs["run_id"]) if label_col in runs else runs["run_id"]
+    runs["_key"] = key
+    runs = runs.sort_values("created").drop_duplicates("_key", keep="last")
+    return runs.drop(columns="_key")
+
+
 def load_preds(rid, results_dir=None):
     return pd.read_csv(_dir("preds", results_dir) / f"{rid}.csv")
 
@@ -120,26 +136,47 @@ def _threshold(cv, thr_mode):
     return metrics.best_threshold(cv["y_true"], cv["y_score"], objective=objective)
 
 
+def _transfer_threshold(thr, cv_scores, test_scores):
+    """Carry a CV-tuned threshold over to the test scores.
+
+    The CV scores are single-model out-of-fold predictions, whereas each test score
+    is an average over several fold models (and seeds). Averaging compresses the
+    distribution, so applying the raw CV threshold can sit above every test score:
+    the ranking (AUC) is fine yet sensitivity collapses to 0. Instead, flag the same
+    *fraction* of peptides as positive that the CV threshold flagged. This uses test
+    scores but never test labels, and assumes the test split has the CV prevalence,
+    which the stratified split guarantees.
+    """
+    q = float(np.mean(np.asarray(cv_scores) >= thr))
+    k = int(round(q * len(test_scores)))
+    if k <= 0:
+        return float(np.max(test_scores)) + 1e-9
+    return float(np.sort(np.asarray(test_scores))[::-1][k - 1])
+
+
 def run_metrics(rid, eval_split="test", thr_mode="mcc_cv", subset=None, results_dir=None):
     """Metrics for one run. The threshold always comes from the CV predictions.
 
     `subset` restricts evaluation to a set of uids (used for the MHC-I / MHC-II
-    breakdown, which needs no retraining).
+    breakdown, which needs no retraining). The threshold is fixed on the whole
+    split first, so a subset is judged at the same operating point as the full set.
     """
     preds = load_preds(rid, results_dir)
     cv = preds[preds["split"] == "cv"]
     thr = _threshold(cv, thr_mode)
 
     ev = cv if eval_split == "cv" else preds[preds["split"] == "test"]
+    # Several seeds predict the same test peptide; average them into one score per peptide.
+    if eval_split == "test" and not ev.empty:
+        ev = ev.groupby("uid", as_index=False).agg(y_true=("y_true", "first"),
+                                                   y_score=("y_score", "mean"))
+        if thr_mode != "fixed" and not cv.empty:
+            thr = _transfer_threshold(thr, cv["y_score"], ev["y_score"])
+
     if subset is not None:
         ev = ev[ev["uid"].isin(set(subset))]
     if ev.empty:
         return None
-
-    # Several seeds predict the same test peptide; average them into one score per peptide.
-    if eval_split == "test":
-        ev = ev.groupby("uid", as_index=False).agg(y_true=("y_true", "first"),
-                                                   y_score=("y_score", "mean"))
     out = metrics.all_metrics(ev["y_true"], ev["y_score"], thr)
     out["n_seeds"] = int(preds["seed"].nunique())
     return out
@@ -166,7 +203,7 @@ def seed_spread(rid, eval_split="test", thr_mode="mcc_cv", results_dir=None):
 def table(exp_id, eval_split="test", thr_mode="mcc_cv", label_col="label",
           order_by=None, extra_cols=(), with_baseline=True, results_dir=None):
     """Comparison table in the paper's column layout, rebuilt from stored predictions."""
-    runs = load_runs(exp_id, results_dir)
+    runs = latest_per_label(load_runs(exp_id, results_dir), label_col)
     if runs.empty:
         return pd.DataFrame()
 
@@ -241,7 +278,7 @@ def roc(exp_id, eval_split="test", label_col="label", title=None, save=True, res
     """ROC overlay, one curve per run, AUC in the legend."""
     import matplotlib.pyplot as plt
 
-    runs = load_runs(exp_id, results_dir)
+    runs = latest_per_label(load_runs(exp_id, results_dir), label_col)
     if "series_order" in runs.columns:
         runs = runs.sort_values("series_order")
     fig, ax = plt.subplots(figsize=(6, 5.5))

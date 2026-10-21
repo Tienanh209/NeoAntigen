@@ -51,6 +51,8 @@ def meta(data_dir=None):
 def max_len(df, data_dir=None):
     """Padded length for the convolution. Prefers the build's MAX_LEN so the
     cache and the model agree even if the longest peptide was filtered out."""
+    if "source" in df.columns and (df["source"] == "authors").all():
+        return int(df["length"].max())   # meta.json describes the CEDAR build, not this dataset
     m = meta(data_dir).get("MAX_LEN")
     return int(m) if m else int(df["length"].max())
 
@@ -124,6 +126,12 @@ def aac_features(seqs):
         if len(s):
             out[i] /= len(s)
     return out
+
+
+def length_features(seqs):
+    """[N, 1] peptide length. The confound check: if length alone separates the
+    classes, a high AUC from a sequence model proves much less than it appears to."""
+    return np.array([[len(s)] for s in seqs], dtype=np.float32)
 
 
 def onehot(seqs, max_len):

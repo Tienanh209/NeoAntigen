@@ -28,6 +28,8 @@ def _features(spec, df, max_len, build_id, data_dir=None):
     kind = spec.get("kind", "plm")
     if kind == "onehot":
         return data.onehot(df["sequence"], max_len)
+    if kind == "length":
+        return data.length_features(df["sequence"]), np.full(len(df), 1, dtype=np.int64)
     if kind == "aac":
         x = data.aac_features(df["sequence"])
         return x, np.full(len(df), 1, dtype=np.int64)

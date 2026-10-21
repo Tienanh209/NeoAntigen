@@ -9,6 +9,7 @@
 - **Colab installs**: never `pip install torch/torchvision/torchaudio/nvidia-*`, and never `numpy`/`scipy` either — Colab ships numpy 2.x with a torch built against it, so the local `numpy<2` pin silently breaks the preinstalled torch. Use
   `grep -viE '^(torch|torchvision|torchaudio|nvidia-|numpy|scipy)' requirements.txt > req_colab.txt`
 - **Experiments**: `src/runner.py` is the entry point; one notebook block per experiment. Every run is committed to `CKPT_DIR/results/` keyed by a config hash, so re-running a block skips finished work and a crash never loses earlier results. Tables and ROC figures are rebuilt from the stored per-sample predictions, never from cached metrics.
+- **Authors' dataset**: `src/authors.py` loads the DeepNeoAG authors' data (github.com/B1607/DeepNeoAG, pinned commit) into `DATA_DIR/authors_dataset.csv`. Its notebooks (`*_authors.ipynb`) use experiment ids prefixed `AU_`, so their runs never mix with the CEDAR ones.
 - **Embeddings**: PLMs are frozen and embedded once into `DATA_DIR/emb/{build_id}/{plm}/`; experiments read that cache and never load a PLM.
 - **Training**: save a checkpoint to Drive every epoch and make it resumable (epoch, model, optimizer in `last.pt`). LoRA: save the adapter only.
 - **Never commit** data, weights (`*.pt`, `*.pth`, `*.ckpt`), `.env`, or tokens.

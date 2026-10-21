@@ -178,6 +178,21 @@ def _finalize(plm, build_id, scratch, out, n_seqs, verbose=True):
     shutil.rmtree(scratch, ignore_errors=True)
 
 
+def _require(plm, build_id, path):
+    """Fail early, with the fix spelled out, when a cache has not been built.
+
+    The build id is derived from the dataset's contents, so the CEDAR build and the
+    authors' dataset each need their own caches: embeddings.ipynb and
+    embeddings_authors.ipynb respectively.
+    """
+    if not (Path(path) / "manifest.json").exists():
+        raise FileNotFoundError(
+            f"No {plm} embeddings for dataset build {build_id} (looked in {path}). "
+            f"Build them first: run embeddings.ipynb for the CEDAR dataset, or "
+            f"embeddings_authors.ipynb for the authors' dataset. A cache built for a "
+            f"different dataset has a different build id and cannot be reused.")
+
+
 def stage(plm, build_id, data_dir=None, verbose=True):
     """Copy a cache from Drive to local scratch once per session.
 
@@ -185,6 +200,7 @@ def stage(plm, build_id, data_dir=None, verbose=True):
     network round-trip.
     """
     src = cache_dir(plm, build_id, data_dir)
+    _require(plm, build_id, src)
     if not config.ON_COLAB:
         return src
     dst = Path(config.WORK_DIR) / "emb_staged" / build_id / plm
@@ -202,9 +218,7 @@ class EmbCache:
 
     def __init__(self, plm, build_id, data_dir=None, staged=True):
         self.path = stage(plm, build_id, data_dir) if staged else cache_dir(plm, build_id, data_dir)
-        if not (self.path / "manifest.json").exists():
-            raise FileNotFoundError(
-                f"no cache for {plm} / build {build_id} at {self.path}; run embeddings.ipynb first")
+        _require(plm, build_id, self.path)
         self.manifest = json.loads((self.path / "manifest.json").read_text())
         self.dim = int(self.manifest["dim"])
         idx = pd.read_csv(self.path / "index.csv")

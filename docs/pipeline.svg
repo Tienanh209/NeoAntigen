@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 300" width="940" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#6b7280"/></marker></defs>
+<rect width="940" height="300" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="470.0" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2937">From a peptide string to a neoantigen probability</text>
+<rect x="30" y="60" width="130" height="170" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+<rect x="30" y="60" width="130" height="170" rx="10" fill="#2563eb" opacity="0"><animate attributeName="opacity" dur="10s" repeatCount="indefinite" keyTimes="0;0.000;0.030;0.170;0.200;1" values="0;0;0.13;0.13;0;0"/></rect>
+<text x="95.0" y="82" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2937">1  Peptide</text>
+<rect x="200" y="60" width="120" height="170" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+<rect x="200" y="60" width="120" height="170" rx="10" fill="#2563eb" opacity="0"><animate attributeName="opacity" dur="10s" repeatCount="indefinite" keyTimes="0;0.200;0.230;0.370;0.400;1" values="0;0;0.13;0.13;0;0"/></rect>
+<text x="260.0" y="82" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2937">2  Frozen PLM</text>
+<rect x="360" y="60" width="150" height="170" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+<rect x="360" y="60" width="150" height="170" rx="10" fill="#2563eb" opacity="0"><animate attributeName="opacity" dur="10s" repeatCount="indefinite" keyTimes="0;0.400;0.430;0.570;0.600;1" values="0;0;0.13;0.13;0;0"/></rect>
+<text x="435.0" y="82" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2937">3  Embedding L×D</text>
+<rect x="550" y="60" width="150" height="170" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+<rect x="550" y="60" width="150" height="170" rx="10" fill="#2563eb" opacity="0"><animate attributeName="opacity" dur="10s" repeatCount="indefinite" keyTimes="0;0.600;0.630;0.770;0.800;1" values="0;0;0.13;0.13;0;0"/></rect>
+<text x="625.0" y="82" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2937">4  Multi-window CNN</text>
+<rect x="740" y="60" width="170" height="170" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+<rect x="740" y="60" width="170" height="170" rx="10" fill="#2563eb" opacity="0"><animate attributeName="opacity" dur="10s" repeatCount="indefinite" keyTimes="0;0.800;0.830;0.970;1.000;1" values="0;0;0.13;0.13;0;0"/></rect>
+<text x="825.0" y="82" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2937">5  Score</text>
+<path d="M164 145 L196 145" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<path d="M324 145 L356 145" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<path d="M514 145 L546 145" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<path d="M704 145 L736 145" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<rect x="42" y="105" width="32" height="28" rx="6" fill="#2563eb"/><text x="58" y="124" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">K</text>
+<rect x="80" y="105" width="32" height="28" rx="6" fill="#2563eb"/><text x="96" y="124" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">L</text>
+<rect x="118" y="105" width="32" height="28" rx="6" fill="#2563eb"/><text x="134" y="124" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">L</text>
+<rect x="42" y="139" width="32" height="28" rx="6" fill="#2563eb"/><text x="58" y="158" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">E</text>
+<rect x="80" y="139" width="32" height="28" rx="6" fill="#f97316"/><text x="96" y="158" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">V</text>
+<rect x="118" y="139" width="32" height="28" rx="6" fill="#2563eb"/><text x="134" y="158" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">Q</text>
+<rect x="42" y="173" width="32" height="28" rx="6" fill="#2563eb"/><text x="58" y="192" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">V</text>
+<rect x="80" y="173" width="32" height="28" rx="6" fill="#2563eb"/><text x="96" y="192" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">K</text>
+<rect x="118" y="173" width="32" height="28" rx="6" fill="#2563eb"/><text x="134" y="192" text-anchor="middle" font-size="14" font-weight="700" fill="#fff" font-family="monospace">Y</text>
+<text x="95" y="218" text-anchor="middle" font-size="11" fill="#6b7280">orange = mutated residue</text>
+<rect x="222" y="105" width="76" height="80" rx="8" fill="#eef2ff" stroke="#2563eb"/>
+<text x="260" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="#2563eb">ESM-2</text><text x="260" y="158" text-anchor="middle" font-size="9" fill="#6b7280">ProtT5 · ESM-1b</text><text x="260" y="174" text-anchor="middle" font-size="9" fill="#6b7280">frozen</text>
+<rect x="372" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.34"/>
+<rect x="386" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.59"/>
+<rect x="400" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.45"/>
+<rect x="414" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.63"/>
+<rect x="428" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.65"/>
+<rect x="442" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.20"/>
+<rect x="456" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.16"/>
+<rect x="470" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.82"/>
+<rect x="484" y="104" width="12" height="12" rx="2" fill="#2563eb" opacity="0.36"/>
+<rect x="372" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.34"/>
+<rect x="386" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.95"/>
+<rect x="400" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.53"/>
+<rect x="414" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.82"/>
+<rect x="428" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.53"/>
+<rect x="442" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.66"/>
+<rect x="456" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.27"/>
+<rect x="470" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.66"/>
+<rect x="484" y="118" width="12" height="12" rx="2" fill="#2563eb" opacity="0.84"/>
+<rect x="372" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.57"/>
+<rect x="386" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.74"/>
+<rect x="400" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.69"/>
+<rect x="414" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.20"/>
+<rect x="428" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.76"/>
+<rect x="442" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.62"/>
+<rect x="456" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.39"/>
+<rect x="470" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.17"/>
+<rect x="484" y="132" width="12" height="12" rx="2" fill="#2563eb" opacity="0.84"/>
+<rect x="372" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.53"/>
+<rect x="386" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.73"/>
+<rect x="400" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.85"/>
+<rect x="414" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.72"/>
+<rect x="428" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.89"/>
+<rect x="442" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.47"/>
+<rect x="456" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.79"/>
+<rect x="470" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.51"/>
+<rect x="484" y="146" width="12" height="12" rx="2" fill="#2563eb" opacity="0.90"/>
+<rect x="372" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.85"/>
+<rect x="386" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.23"/>
+<rect x="400" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.26"/>
+<rect x="414" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.32"/>
+<rect x="428" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.92"/>
+<rect x="442" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.50"/>
+<rect x="456" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.65"/>
+<rect x="470" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.39"/>
+<rect x="484" y="160" width="12" height="12" rx="2" fill="#2563eb" opacity="0.56"/>
+<rect x="372" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.46"/>
+<rect x="386" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.43"/>
+<rect x="400" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.62"/>
+<rect x="414" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.62"/>
+<rect x="428" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.87"/>
+<rect x="442" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.70"/>
+<rect x="456" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.89"/>
+<rect x="470" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.84"/>
+<rect x="484" y="174" width="12" height="12" rx="2" fill="#2563eb" opacity="0.94"/>
+<text x="435" y="208" text-anchor="middle" font-size="11" fill="#6b7280">one vector per residue</text>
+<rect x="566" y="102" width="84" height="18" rx="4" fill="#2563eb" opacity="0.85"/><text x="572" y="115" font-size="11" font-weight="700" fill="#fff">window 34</text>
+
+<rect x="566" y="128" width="84" height="18" rx="4" fill="#0891b2" opacity="0.85"/><text x="572" y="141" font-size="11" font-weight="700" fill="#fff">window 32</text>
+
+<rect x="566" y="154" width="84" height="18" rx="4" fill="#059669" opacity="0.85"/><text x="572" y="167" font-size="11" font-weight="700" fill="#fff">window 24</text>
+
+<rect x="566" y="180" width="84" height="18" rx="4" fill="#d97706" opacity="0.85"/><text x="572" y="193" font-size="11" font-weight="700" fill="#fff">window 16</text>
+
+<text x="640" y="214" text-anchor="middle" font-size="11" fill="#6b7280">1-max pool each → concat</text>
+<text x="825" y="118" text-anchor="middle" font-size="11" fill="#6b7280">FC 256 → 1</text>
+<rect x="770" y="130" width="110" height="18" rx="9" fill="#e5e7eb"/>
+<rect x="770" y="130" width="0" height="18" rx="9" fill="#059669"><animate attributeName="width" dur="10s" repeatCount="indefinite" keyTimes="0;0.78;0.9;0.98;1" values="0;0;78;78;0"/></rect>
+<text x="825" y="176" text-anchor="middle" font-size="22" font-weight="700" fill="#059669">P(neo) ↑</text>
+<text x="825" y="200" text-anchor="middle" font-size="11" fill="#6b7280">no MHC allele needed</text>
+<circle r="6" fill="#f97316"><animateMotion dur="10s" repeatCount="indefinite" path="M40 252 L900 252"/></circle>
+<path d="M30 252 L910 252" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+<text x="470.0" y="286" text-anchor="middle" font-size="11" fill="#6b7280">Illustrative schematic · shapes and values are not real model output</text>
+</svg>

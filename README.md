@@ -136,6 +136,7 @@ Data goes in `DATA_DIR`, checkpoints in `CKPT_DIR`, and a GitHub token (if the r
 | Source | What | Notes |
 |--------|------|-------|
 | **CEDAR** (rebuilt) | T cell epitopes from melanoma as positives; viral and tumor-associated antigen epitopes as negatives | CEDAR changes over time, so the raw download is saved as `cedar_raw_YYYYMMDD.csv` and every build writes `meta.json` with its parameters |
+| **CEDAR lung** (`src/lung.py`) | T cell-validated neoantigens from lung cancer (NSCLC + SCLC) as positives; same viral/TAA negatives | raw saved as `lung_cedar_raw_YYYYMMDD.csv`; extra sources (e.g. TSNAdb, predicted only) are opt-in via `lung.load_extra` |
 | **DeepNeoAG authors'** | 7,012 peptides: 241 positive + 5,367 negative for training, 61 positive + 1,343 negative for testing | pinned to a commit of [B1607/DeepNeoAG](https://github.com/B1607/DeepNeoAG) so it can never change under a run |
 
 ## Limits

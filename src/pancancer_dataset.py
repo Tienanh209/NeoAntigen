@@ -28,9 +28,26 @@ OUT_COLS = ["uid", "accession", "structure_id", "sequence", "length", "label", "
             "year_first", "pubmed_ids", "disease_names", "mhc_allele_names", "mhc_classes", "dataset_version", "download_date"]
 
 
-def _group(d):
-    """Reporting group of a frame: the cancer itself for the three core diseases, else other_solid / hematologic."""
-    return d["disease_group"].where(d["role"] == "core", d["role"].map({"ood": "other_solid", "heme": HEME}))
+def stage_table(stages):
+    """One row per cancer, one column per step: how many positives / negatives each step leaves.
+
+    `stages` maps a step name to the frame after that step (first = raw, last = final). The last two columns say what
+    share of the raw positives / negatives survived to the end.
+    """
+    names = list(stages)
+    cnt = {k: v.groupby("disease_group")["label"].agg(pos=lambda y: int((y == 1).sum()), neg=lambda y: int((y == 0).sum()))
+           for k, v in stages.items()}
+    raw = cnt[names[0]]
+    order = [d for d in CORE if d in raw.index] + [d for d in raw.sort_values("pos", ascending=False).index if d not in CORE]
+    rows = []
+    for d in order + ["total"]:
+        c = {k: (v.sum() if d == "total" else v.reindex([d]).fillna(0).iloc[0]).astype(int) for k, v in cnt.items()}
+        row = {"cancer": "other (misc)" if d == "other" else d}
+        row.update({k: f"{c[k].pos:,} pos / {c[k].neg:,} neg" for k in names})
+        row["positives kept"] = f"{c[names[-1]].pos / max(c[names[0]].pos, 1):.0%}"
+        row["negatives kept"] = f"{c[names[-1]].neg / max(c[names[0]].neg, 1):.0%}"
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def _counts(d):
@@ -56,7 +73,6 @@ def make_paper_dataset(raw, data_dir, work_dir, name="pancancer_paper_v1", sim_i
 
     # 1) positive / negative (disease-matched experimental negatives); the length filter comes after CD-HIT
     df, info = ps.build(raw, "exp", min_len=min_len, max_len=None)
-    df = df.assign(group_=_group(df))
 
     # 2) CD-HIT once, over every group
     reps = reduce(df, Path(work_dir) / name)
@@ -92,11 +108,8 @@ def make_paper_dataset(raw, data_dir, work_dir, name="pancancer_paper_v1", sim_i
     sim = pd.DataFrame(_similarity(sets, sim_id) if check_similarity else [])
 
     # tables: stages, and train/test sizes
-    stages = {"built": df, "CD-HIT": reps, f"length<={max_len}": ln}
-    t1 = pd.concat({k: v.groupby("group_")["label"].agg(**{"N+": lambda y: int((y == 1).sum()),
-                                                            "N-": lambda y: int((y == 0).sum())})
-                    for k, v in stages.items()}, axis=1).fillna(0).astype(int)
-    t1.columns = [f"{a} {b}" for a, b in t1.columns]
+    stages = {"raw": df, "after CD-HIT 0.4": reps, f"after length<={max_len}": ln}
+    t1 = stage_table(stages)
     rows = []
     for nm, d in [("colorectal train", per["colorectal"][0]), ("colorectal test", per["colorectal"][1]),
                   ("lung train", per["lung"][0]), ("lung test", per["lung"][1]),
@@ -116,7 +129,7 @@ def make_paper_dataset(raw, data_dir, work_dir, name="pancancer_paper_v1", sim_i
         "snapshot_version": str(raw["dataset_version"].iloc[0]), "download_date": str(raw["download_date"].iloc[0]),
         "git_sha": config.git_sha(), "exclusions": pd.Series([r for _, r in log]).value_counts().to_dict(),
         "limitations": limits, "created": datetime.datetime.now().isoformat(timespec="seconds")}, indent=2))
-    return {"sets": sets, "table1": t1, "table2": t2, "similarity": sim, "limitations": limits,
+    return {"sets": sets, "stages": stages, "table1": t1, "table2": t2, "similarity": sim, "limitations": limits,
             "exclusions": pd.DataFrame(log, columns=["uid", "reason"])}
 
 
@@ -141,7 +154,7 @@ def _write(out, per, pooled_tr, pooled_te, other, heme, t1, t2, sim, log, max_le
         save(d, pd.concat([tr.assign(split="train"), te.assign(split="test")], ignore_index=True))
     save("pooled", pd.concat([pooled_tr.assign(split="train", test_set=""), pooled_te.assign(split="test"), other, heme],
                              ignore_index=True))
-    t1.to_csv(out / "table1_stages.csv")
+    t1.to_csv(out / "table1_stages.csv", index=False)
     t2.to_csv(out / "table2_splits.csv", index=False)
     sim.to_csv(out / "similarity_report.csv", index=False)
     pd.DataFrame(log, columns=["uid", "reason"]).to_csv(out / "split_exclusions.csv", index=False)

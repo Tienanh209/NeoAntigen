@@ -83,7 +83,10 @@ def run_experiment(exp_id, *, features, model, train_cfg=None, label="",
 
     groups = None
     if split_mode == "grouped":
-        groups = data.kmer_groups(train_df).to_numpy()
+        # frozen datasets (pancancer_split) carry their CD-HIT cluster id: fold by it so near-duplicates never straddle
+        # train/validation; other datasets fall back to shared 8-mers
+        groups = (train_df["cluster_id"].to_numpy() if "cluster_id" in train_df
+                  else data.kmer_groups(train_df).to_numpy())
 
     rows, fold_info = [], []
     for seed in seeds:

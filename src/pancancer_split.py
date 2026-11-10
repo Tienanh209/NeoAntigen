@@ -163,6 +163,7 @@ def arm_frame(m, arm, test_fold=0, neg_ratio=5, seed=42):
     out["in_dist"] = out["disease_group"].isin(diseases)
     out["similar_to_train"] = (out["split"] == "test") & out["cluster_id"].isin(train_clusters)
     out["arm"], out["test_fold"] = arm, test_fold
+    out["test_set"] = np.where(out["split"] == "test", test_set_name(out), "")
     check_arm(out)
     return out
 
@@ -215,3 +216,34 @@ def eval_table(df, min_pos=50):
     t = pd.DataFrame(rows)
     t["reportable"] = (t["N+ clean"] >= min_pos) & (t["N- clean"] >= min_pos)
     return t.sort_values(["in_dist", "N+"], ascending=False).reset_index(drop=True)
+
+
+def test_set_name(d):
+    """Evaluation-set name of a row: the cancer (core), other_<cancer>, hematologic, or background."""
+    name = d["disease_group"].replace({"other": "misc"})
+    return (name.where(d["role"] == "core", "other_" + name)
+            .where(d["role"] != "heme", HEMATOLOGIC).where(d["role"] != "bg", "background"))
+
+
+MAIN_ARMS = ("colorectal", "lung", "melanoma", "pooled")
+
+
+def write_main_arms(m, data_dir, name="pancancer_cedar_v1", test_fold=0, neg_ratio=None, seed=42):
+    """The requested layout, split by cluster so no peptide is thrown away.
+
+    colorectal / lung / melanoma: trained and tested on their own ~80:20 (one outer fold = the 20%), 5-fold CV on train
+    in the runner (split_mode="grouped" groups the folds by `cluster_id`). pooled: the three trains together, tested on
+    the three tests (24:6 = 80:20), plus the other cancers as extra test rows (`test_set`, `similar_to_train`).
+    neg_ratio None keeps every negative (the paper's choice); an int caps negatives per positive in train.
+    Returns ({arm: frame}, sizes, eval tables of all arms).
+    """
+    frames, sizes, evals = {}, [], []
+    for arm in MAIN_ARMS:
+        df = arm_frame(m, arm, test_fold, neg_ratio, seed)
+        write_arm(df, data_dir, name)
+        frames[arm] = df
+        tr, own = df[df["split"] == "train"], df[(df["split"] == "test") & df["in_dist"]]
+        sizes.append({"arm": arm, "train N+": int((tr["label"] == 1).sum()), "train N-": int((tr["label"] == 0).sum()),
+                      "own test N+": int((own["label"] == 1).sum()), "own test N-": int((own["label"] == 0).sum())})
+        evals.append(eval_table(df).assign(arm=arm))
+    return frames, pd.DataFrame(sizes), pd.concat(evals, ignore_index=True)

@@ -38,10 +38,20 @@ and (b) every other solid cancer with >= 100 positives, reported per disease, pl
 - Whether to add hematologic as an extra OOD set.
 - Whether to use `year_first` temporal test (see `lung_split.py`) in addition to grouped folds.
 
-## Paper-style design (`src/pancancer_dataset.py`), the one requested for the experiments
+## Paper-style design (`src/pancancer_dataset.py`): comparison with the paper only
 raw snapshot -> positive / negative (`exp_negative`) -> CD-HIT 0.4 once over all groups -> length <= 35 -> 80:20.
 - colorectal, lung, melanoma: each its own stratified 80:20 (5-fold CV on train in the runner).
 - pooled: train = the three trains, test = the three tests (24:6 is 80:20 by construction).
 - other cancers (and hematologic): test only, `test_set = other_<disease>`; report a disease only with >= 50 positives and negatives.
 - Cost: CD-HIT keeps one peptide per cluster, so positives drop a lot (paper: 671 -> 303); `table1_stages.csv` shows it.
 The cluster-fold arms (`pancancer_split.py`) remain as the alternative that keeps all peptides.
+
+## Main design (decided after the Colab run): cluster split, no peptide discarded
+Paper-style CD-HIT representatives left 63 / 34 / 136 positives for colorectal / lung / melanoma (tests of 12 / 7 / 27
+positives), too small to evaluate each cancer. The main layout therefore groups by CD-HIT cluster instead of removing
+peptides (`pancancer_split.write_main_arms`):
+- colorectal, lung, melanoma: each trained and tested on its own ~80:20 (one outer fold is the 20%); 5-fold CV on train
+  with `split_mode="grouped"`, which now folds by the frame's `cluster_id`.
+- pooled: the three trains together, tested on the three tests (24:6 = 80:20), plus the other cancers as test rows.
+- Every test row carries `test_set` and `similar_to_train`; report on `~similar_to_train` and show the all-rows number
+  beside it. All negatives are kept (`neg_ratio=None`); AUC is compared across diseases, prevalence is reported.

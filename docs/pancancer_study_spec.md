@@ -62,3 +62,29 @@ cluster with MMseqs2 (`easy-cluster --min-seq-id 0.3 -c 0.8 --cov-mode 1 -s 8`),
 representatives for the paper-style pipeline. Use a new dataset name (e.g. `pancancer_cedar_v1_id30`); `meta.json` records
 `cluster_method`, `sim_id` and `cluster_kw`. MMseqs2 is less sensitive on 8-35 aa peptides, so confirm with
 `check_similarity` (independent, ungapped, a lower bound; not a proof of < 30%).
+
+## Reproducibility rules
+- The raw snapshot is the data: CEDAR changes over time, so a result is reproduced from `pancancer_cedar_raw_YYYYMMDD[_n].csv`,
+  never from a fresh download. Snapshots are never overwritten (a second download the same day gets `_2`).
+- Pin the snapshot in notebooks: `pancancer.get_raw(config.DATA_DIR, snapshot="20261110")`. Without it the latest file is
+  taken and a warning is printed when several exist.
+- The snapshot's `.meta.json` holds its SHA-256, the labelling rules (`disease_groups`, `not_cancer_re`), the `git_sha`
+  and tool versions; `get_raw` warns if the file no longer matches the checksum.
+- A dataset's `meta.json` (manifest) records `snapshot_file`, `snapshot_sha256`, `manifest_sha256`, `tool_versions`
+  (python, numpy, pandas, scikit-learn, cd-hit, mmseqs), `git_sha`, the parameters and `seed`. The manifest itself stores
+  `cluster_id` and `outer_fold`, so the split is frozen and need not be recomputed.
+- `git_sha` is the checked-out commit: run builds from a clean checkout (as Colab does), not with local edits.
+
+## Per-arm experiments (`embeddings_pancancer.ipynb`, `experiments_arm.ipynb`)
+Any arm (`colorectal`, `lung`, `melanoma`, `pooled`) at any outer fold, every negative kept. Documented fold-0 sizes (train pos/neg | own test pos/neg):
+colorectal 384/6,867 | 77/1,584; lung 547/1,480 | 97/311; melanoma 1,265/4,456 | 268/1,075; pooled 2,196/12,803 | 442/2,970.
+- **Embed once.** Every arm frame is a subset of the manifest, so `embeddings_pancancer.ipynb` embeds the whole manifest once
+  (cache key `ps.emb_id(manifest)`); `load_arm` attaches it as `df.attrs["emb_id"]` and the runner reads that cache. Run identity still uses
+  the frame's own `build_id`, so arms never collide in the results store.
+- **Switch arm** by editing `ARM, FOLD` in block 1 of `experiments_arm.ipynb`; experiment ids are prefixed per arm (`CRC_`, `LUNG_`, `MEL_`, `POOL_`).
+  `ps.build_arm` rebuilds the frame from `manifest.csv` (deterministic) instead of trusting an old directory.
+- The runner scores every non-train row: read tables with `subset=OWN` (own test) and `thr_on=OWN` (operating point fixed on it);
+  other diseases come from `ps.eval_uids(df)` through `results.by_set` (rows similar to the arm's train are removed). For `pooled`, `OWN` is the
+  three tests together and each disease also has its own "(own test)" column.
+- `results.cluster_bootstrap` / `bootstrap_table` resample whole clusters, because peptides of one cluster are near-duplicates.
+- `write_arm` adds `_nr<r>` to the directory when negatives were capped, so a 5x frame never overwrites the full one.

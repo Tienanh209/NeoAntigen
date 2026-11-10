@@ -63,7 +63,8 @@ def run_experiment(exp_id, *, features, model, train_cfg=None, label="",
                    force=False, verbose=True):
     """Run and commit one configuration. Skips instantly if already committed."""
     df = data.load_dataset(data_dir) if df is None else df
-    bid = data.build_id(df)
+    bid = data.build_id(df)                      # identifies this frame's runs
+    emb_bid = df.attrs.get("emb_id", bid)        # frames that are subsets of a manifest share its embedding cache
     mlen = data.max_len(df, data_dir)
 
     cfg = {"build_id": bid, "features": features, "model": model,
@@ -74,7 +75,7 @@ def run_experiment(exp_id, *, features, model, train_cfg=None, label="",
             print(f"  [skip] {label or exp_id} — already committed")
         return results.load_runs(exp_id, results_dir)
 
-    x, lengths = _features(features, df, mlen, bid, data_dir)
+    x, lengths = _features(features, df, mlen, emb_bid, data_dir)
     y = df["label"].to_numpy().astype(np.float32)
     is_train = (df["split"] == "train").to_numpy()
     tr_idx = np.flatnonzero(is_train)

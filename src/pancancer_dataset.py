@@ -16,6 +16,7 @@ so `data.load_dataset(DATA_DIR / name / "pooled")` works. `test_set` names the e
 """
 import datetime
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -48,6 +49,49 @@ def stage_table(stages):
         row["negatives kept"] = f"{c[names[-1]].neg / max(c[names[0]].neg, 1):.0%}"
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def paper_funnel(res):
+    """The three main cancers (+ pooled) through the paper-style pipeline: raw -> similarity filter -> length -> train / test.
+
+    `res` is the dict returned by `make_paper_dataset`."""
+    stages, sets = res["stages"], res["sets"]
+    names = list(stages)
+    pn = lambda d: f"{int((d['label'] == 1).sum()):,} pos / {int((d['label'] == 0).sum()):,} neg"
+    rows = []
+    for arm in list(CORE) + ["pooled"]:
+        ds = CORE if arm == "pooled" else (arm,)
+        row = {"cancer": arm}
+        row.update({k: pn(v[v["disease_group"].isin(ds)]) for k, v in stages.items()})
+        row["train"], row["test"] = pn(sets[f"{arm}_train"]), pn(sets[f"{arm}_test"])
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def default_filters():
+    """The two similarity filters to compare: CD-HIT 0.4 and MMseqs2 0.3 (both keep one representative per cluster)."""
+    return {"CD-HIT 0.4": lambda d, w: cedar.cdhit_filter(d, w, sim_id=0.4),
+            "MMseqs2 0.3": lambda d, w: ps.mmseqs_filter(d, w, 0.3)}
+
+
+def filter_stage_tables(raw, work_dir, filters=None, min_len=8, max_len=35, out_dir=None):
+    """One stage table per similarity filter (cancer x raw / after filter / after length), no splitting.
+
+    Same columns as `make_paper_dataset`'s table1, so the effect of each tool reads side by side.
+    `filters` maps a name to `reduce(df, work_dir)` (default: `default_filters()`); with `out_dir` each table is also saved
+    as stage_table_<name>.csv.
+    """
+    df, _ = ps.build(raw, "exp", min_len=min_len, max_len=None)
+    out = {}
+    for name, reduce in (filters or default_filters()).items():
+        slug = re.sub(r"\W+", "_", name).strip("_")
+        reps = reduce(df, Path(work_dir) / f"stage_{slug}")
+        ln = reps[reps["length"] <= max_len]
+        out[name] = stage_table({"raw": df, f"after {name}": reps, f"after length<={max_len}": ln})
+        if out_dir:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            out[name].to_csv(Path(out_dir) / f"stage_table_{slug}.csv", index=False)
+    return out
 
 
 def _counts(d):
@@ -127,6 +171,8 @@ def make_paper_dataset(raw, data_dir, work_dir, name="pancancer_paper_v1", sim_i
         "dataset_version": name, "neg_mode": "exp", "sim_id": sim_id, "min_len": min_len, "max_len": max_len, "MAX_LEN": max_len,
         "test_size": test_size, "seed": seed, "core": CORE, **info, "cdhit": lung_split._cdhit_version(),
         "snapshot_version": str(raw["dataset_version"].iloc[0]), "download_date": str(raw["download_date"].iloc[0]),
+        "snapshot_file": raw.attrs.get("snapshot_file", ""), "snapshot_sha256": raw.attrs.get("snapshot_sha256", ""),
+        "tool_versions": config.tool_versions(),
         "git_sha": config.git_sha(), "exclusions": pd.Series([r for _, r in log]).value_counts().to_dict(),
         "limitations": limits, "created": datetime.datetime.now().isoformat(timespec="seconds")}, indent=2))
     return {"sets": sets, "stages": stages, "table1": t1, "table2": t2, "similarity": sim, "limitations": limits,

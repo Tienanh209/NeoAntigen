@@ -21,6 +21,7 @@ Negatives (`neg_mode`): "exp" = experimentally tested, T cell negative neoantige
 "bg" = viral / TAA background epitopes (the paper's choice; "virus vs human" shortcut, kept for comparison).
 """
 import datetime
+import hashlib
 import json
 import os
 import shutil
@@ -154,6 +155,8 @@ def make_dataset(raw, data_dir, work_dir, name="pancancer_cedar_v1", neg_mode="e
         "dataset_version": name, "neg_mode": neg_mode, "n_folds": n_folds, "sim_id": sim_id, "min_len": min_len,
         "max_len": max_len, "seed": seed, "cluster_method": used, "cluster_kw": cluster_kw or {}, "core": CORE, "not_used": NOT_USED, **info,
         "snapshot_version": str(raw["dataset_version"].iloc[0]), "download_date": str(raw["download_date"].iloc[0]),
+        "snapshot_file": raw.attrs.get("snapshot_file", ""), "snapshot_sha256": raw.attrs.get("snapshot_sha256", ""),
+        "manifest_sha256": config.file_sha256(out / "manifest.csv"), "tool_versions": config.tool_versions(),
         "git_sha": config.git_sha(), "created": datetime.datetime.now().isoformat(timespec="seconds")}, indent=2))
     return manifest, summary
 
@@ -174,12 +177,13 @@ def summarize(m):
     return pd.DataFrame(rows).sort_values("N+", ascending=False).reset_index(drop=True)
 
 
-def arm_frame(m, arm, test_fold=0, neg_ratio=5, seed=42):
+def arm_frame(m, arm, test_fold=0, neg_ratio=None, seed=42):
     """The runner's dataframe for one arm and one outer test fold (see module docstring for the columns).
 
     Train = the arm's diseases outside `test_fold` (+ background negatives when the manifest is a "bg" build).
-    neg_ratio: per training disease keep at most neg_ratio negatives per positive (None keeps all), which removes the
-    prevalence difference between diseases. Test = every other row; nothing is removed from it, only flagged.
+    neg_ratio: per training disease keep at most neg_ratio negatives per positive (None, the default, keeps all; a ratio
+    removes the prevalence difference between diseases but drops data). Test = every other row; nothing is removed
+    from it, only flagged.
     """
     diseases = ARMS[arm]
     rng = np.random.default_rng(seed)
@@ -206,6 +210,7 @@ def arm_frame(m, arm, test_fold=0, neg_ratio=5, seed=42):
     out["in_dist"] = out["disease_group"].isin(diseases)
     out["similar_to_train"] = (out["split"] == "test") & out["cluster_id"].isin(train_clusters)
     out["arm"], out["test_fold"] = arm, test_fold
+    out["neg_ratio"] = int(neg_ratio or 0)                    # 0 = every negative kept
     out["test_set"] = np.where(out["split"] == "test", test_set_name(out), "")
     check_arm(out)
     return out
@@ -220,15 +225,68 @@ def check_arm(df):
     assert df["uid"].is_unique, "duplicate uid"
 
 
+def arm_dir(data_dir, name, arm, fold=0, neg_ratio=None):
+    """DATA_DIR/<name>/<arm>_f<k>, with an `_nr<r>` suffix when negatives were capped (never overwrites the full frame)."""
+    return Path(data_dir) / name / (f"{arm}_f{fold}" + (f"_nr{neg_ratio}" if neg_ratio else ""))
+
+
 def write_arm(df, data_dir, name="pancancer_cedar_v1"):
-    """DATA_DIR/<name>/<arm>_f<k>/deepneoag_like_dataset.csv: loadable with `data.load_dataset(dir)`."""
-    d = Path(data_dir) / name / f"{df['arm'].iloc[0]}_f{df['test_fold'].iloc[0]}"
+    """DATA_DIR/<name>/<arm>_f<k>[_nr<r>]/deepneoag_like_dataset.csv: loadable with `data.load_dataset(dir)`."""
+    nr = int(df["neg_ratio"].iloc[0]) if "neg_ratio" in df else 0
+    d = arm_dir(data_dir, name, df["arm"].iloc[0], int(df["test_fold"].iloc[0]), nr)
     d.mkdir(parents=True, exist_ok=True)
     df.to_csv(d / "deepneoag_like_dataset.csv", index=False)
     (d / "meta.json").write_text(json.dumps({"arm": df["arm"].iloc[0], "test_fold": int(df["test_fold"].iloc[0]),
-                                             "build_id": data.build_id(df), "n_train": int((df["split"] == "train").sum()),
+                                             "neg_ratio": nr, "build_id": data.build_id(df),
+                                             "n_train": int((df["split"] == "train").sum()),
                                              "n_test": int((df["split"] == "test").sum())}, indent=2))
     return d
+
+
+def load_arm(data_dir, name="pancancer_cedar_v1", arm="colorectal", fold=0, neg_ratio=None):
+    """An arm frame written by `write_arm`, with the padded length attached (`df.attrs["max_len"]`) so
+    `data.max_len` does not fall back to another dataset's meta.json."""
+    df = data.load_dataset(arm_dir(data_dir, name, arm, fold, neg_ratio))
+    meta = Path(data_dir) / name / "meta.json"
+    df.attrs["max_len"] = int(json.loads(meta.read_text()).get("max_len", 35)) if meta.exists() else 35
+    mpath = Path(data_dir) / name / "manifest.csv"
+    if mpath.exists():       # every arm frame is a subset of the manifest: the runner reads the manifest-wide embedding cache
+        df.attrs["emb_id"] = emb_id(pd.read_csv(mpath, usecols=["uid", "sequence"]))
+    return df
+
+
+def build_arm(data_dir, name="pancancer_cedar_v1", arm="colorectal", fold=0, neg_ratio=None, seed=42):
+    """Rebuild an arm frame from manifest.csv (deterministic), write it and return it loaded.
+
+    Never trusts an old directory: an arm written earlier with another `neg_ratio` or by older code is simply replaced."""
+    write_arm(arm_frame(load_manifest(data_dir, name), arm, fold, neg_ratio, seed), data_dir, name)
+    return load_arm(data_dir, name, arm, fold, neg_ratio)
+
+
+ARM_PREFIX = {"colorectal": "CRC", "lung": "LUNG", "melanoma": "MEL", "pooled": "POOL", "pooled_bal": "POOLB"}
+# (train pos, train neg, own-test pos, own-test neg) of the 2026-11-10 snapshot, CD-HIT 0.4, fold 0, every negative kept.
+# A guard against a silently changed manifest, not a contract: a rebuilt manifest may legitimately differ.
+DOCUMENTED = {"colorectal": (384, 6867, 77, 1584), "lung": (547, 1480, 97, 311), "melanoma": (1265, 4456, 268, 1075),
+              "pooled": (2196, 12803, 442, 2970)}
+
+
+def emb_id(manifest):
+    """Cache key for the embeddings of a whole manifest. Every arm frame is a subset of it, so all arms and folds
+    read ONE cache (`embeddings_pancancer.ipynb` builds it once)."""
+    payload = "\n".join(f"{u}\t{s}" for u, s in sorted(zip(manifest["uid"], manifest["sequence"])))
+    return "pc_" + hashlib.sha1(payload.encode()).hexdigest()[:10]
+
+
+def arm_counts(df):
+    """(train pos, train neg, own-test pos, own-test neg) of an arm frame."""
+    tr, own = df[df["split"] == "train"], df[(df["split"] == "test") & df["in_dist"]]
+    return (int((tr["label"] == 1).sum()), int((tr["label"] == 0).sum()),
+            int((own["label"] == 1).sum()), int((own["label"] == 0).sum()))
+
+
+def own_uids(df):
+    """uids of the arm's own test (every disease the arm was trained on; for `pooled`, the three tests together)."""
+    return df.loc[(df["split"] == "test") & df["in_dist"], "uid"]
 
 
 def eval_sets(df, clean=True):
@@ -242,6 +300,33 @@ def eval_sets(df, clean=True):
     out = {}
     for g, d in te[te["disease_group"] != "background"].groupby("disease_group"):
         out[g] = d if (d["label"] == 0).any() else pd.concat([d, bg])
+    return out
+
+
+def eval_uids(df):
+    """{set name: uids} of the test rows to score, clean rows only (not similar to this arm's training data).
+
+    Order: the arm's own test sets ("<disease> (own test)"), the other core cancers, every other cancer by size,
+    then "other solid (all)" and hematologic. Feed it to `results.by_set` / `results.breakdown`.
+    """
+    sets = eval_sets(df, clean=True)
+    info = df.drop_duplicates("disease_group").set_index("disease_group")[["role", "in_dist"]]
+    out, solid = {}, []
+    for g in sorted(sets, key=lambda g: -(sets[g]["label"] == 1).sum()):
+        role, own = info.loc[g, "role"], bool(info.loc[g, "in_dist"])
+        if own:
+            out[f"{g} (own test)"] = sets[g]["uid"]
+        elif role == "core":
+            out[g] = sets[g]["uid"]
+    for g in sorted(sets, key=lambda g: -(sets[g]["label"] == 1).sum()):
+        if info.loc[g, "role"] == "ood":
+            out[g] = sets[g]["uid"]
+            solid.append(sets[g])
+    if solid:
+        out["other solid (all)"] = pd.concat(solid)["uid"]
+    for g in sets:
+        if info.loc[g, "role"] == "heme":
+            out[g] = sets[g]["uid"]
     return out
 
 
@@ -268,6 +353,29 @@ def check_similarity(df, sim_id=0.4):
     te = df[(df["split"] == "test") & ~df["similar_to_train"]]
     return pd.DataFrame([lung_split.cross_split_check(tr, te[te["in_dist"]], "train", "own test", sim_id),
                          lung_split.cross_split_check(tr, te[~te["in_dist"]], "train", "other cancers", sim_id)])
+
+
+def _pn(d):
+    return f"{int((d['label'] == 1).sum()):,} pos / {int((d['label'] == 0).sum()):,} neg"
+
+
+def cluster_funnel(raw, manifest, frames):
+    """The three main cancers (+ pooled) from CEDAR to train/test in the cluster split.
+
+    CEDAR = unique peptides per tier in the raw snapshot; cleaned = the manifest (standard amino acids, no label conflict,
+    8-35 aa); train / test = the arm's own frame. Clustering removes nothing, it only keeps similar peptides on one side.
+    """
+    neo = raw[raw["group"] == "neo"]
+    rows = []
+    for arm in ("colorectal", "lung", "melanoma", "pooled"):
+        ds = CORE if arm == "pooled" else (arm,)
+        c = neo[neo["disease_group"].isin(ds)]
+        cedar_n = {t: c.loc[c["tier"] == t, "linear_sequence"].nunique() for t in ("positive", "exp_negative")}
+        f = frames[arm]
+        rows.append({"cancer": arm, "CEDAR": f"{cedar_n['positive']:,} pos / {cedar_n['exp_negative']:,} neg",
+                     "cleaned, 8-35 aa": _pn(manifest[manifest["disease_group"].isin(ds)]),
+                     "train": _pn(f[f["split"] == "train"]), "test": _pn(f[(f["split"] == "test") & f["in_dist"]])})
+    return pd.DataFrame(rows)
 
 
 def test_set_name(d):

@@ -4,8 +4,11 @@ Colab: code in /content/NeoAntigen (git clone), data + checkpoints on Drive.
 Local: data/ and checkpoints/ inside the repo (both git-ignored).
 Override with the env vars NEOANTIGEN_DRIVE, DATA_DIR, CKPT_DIR, WORK_DIR.
 """
+import hashlib
+import importlib.metadata
 import importlib.util
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -35,6 +38,34 @@ def git_sha():
         return out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def file_sha256(path, chunk=1 << 20):
+    """SHA-256 of a file: identifies the exact snapshot / manifest a result was built from."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def tool_versions():
+    """Versions of what shapes a dataset (recorded in every meta.json). '' when a tool is not installed."""
+    out = {"python": platform.python_version()}
+    for name in ("numpy", "pandas", "scikit-learn"):
+        try:
+            out[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            out[name] = ""
+    for exe, args in (("cd-hit", ["-h"]), ("mmseqs", ["version"])):
+        path = shutil.which(exe)
+        try:
+            r = subprocess.run([path, *args], capture_output=True, text=True, timeout=20) if path else None
+            lines = (r.stdout or r.stderr).strip().splitlines() if r else []
+            out[exe] = lines[0].strip("= ") if lines else ""
+        except (OSError, subprocess.SubprocessError):
+            out[exe] = ""
+    return out
 
 
 def stage_data():

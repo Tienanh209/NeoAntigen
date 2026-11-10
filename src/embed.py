@@ -230,9 +230,13 @@ class EmbCache:
         return np.asarray(self._vec[off:off + ln])
 
     def stack(self, uids, max_len):
-        """[N, D, L] float32 padded, plus true lengths — the model's input contract."""
+        """[N, D, L] padded, plus true lengths — the model's input contract.
+
+        float16 like the cache (lossless, half the RAM: 24.7k peptides x 1280 x 35 is 4.4 GB as float32);
+        `train._to_torch` casts each batch to float32.
+        """
         uids = list(uids)
-        x = np.zeros((len(uids), self.dim, max_len), dtype=np.float32)
+        x = np.zeros((len(uids), self.dim, max_len), dtype=np.float16)
         lengths = np.zeros(len(uids), dtype=np.int64)
         for i, uid in enumerate(uids):
             e = self.get(uid)[:max_len]

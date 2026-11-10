@@ -154,12 +154,14 @@ def _transfer_threshold(thr, cv_scores, test_scores):
     return float(np.sort(np.asarray(test_scores))[::-1][k - 1])
 
 
-def run_metrics(rid, eval_split="test", thr_mode="mcc_cv", subset=None, results_dir=None):
+def run_metrics(rid, eval_split="test", thr_mode="mcc_cv", subset=None, thr_on=None, results_dir=None):
     """Metrics for one run. The threshold always comes from the CV predictions.
 
     `subset` restricts evaluation to a set of uids (used for the MHC-I / MHC-II
     breakdown, which needs no retraining). The threshold is fixed on the whole
     split first, so a subset is judged at the same operating point as the full set.
+    `thr_on` (uids) fixes that operating point on those rows only: when the test split mixes
+    several diseases, pass the arm's own test so every disease is judged at its operating point.
     """
     preds = load_preds(rid, results_dir)
     cv = preds[preds["split"] == "cv"]
@@ -171,7 +173,9 @@ def run_metrics(rid, eval_split="test", thr_mode="mcc_cv", subset=None, results_
         ev = ev.groupby("uid", as_index=False).agg(y_true=("y_true", "first"),
                                                    y_score=("y_score", "mean"))
         if thr_mode != "fixed" and not cv.empty:
-            thr = _transfer_threshold(thr, cv["y_score"], ev["y_score"])
+            ref = ev if thr_on is None else ev[ev["uid"].isin(set(thr_on))]
+            if not ref.empty:
+                thr = _transfer_threshold(thr, cv["y_score"], ref["y_score"])
 
     if subset is not None:
         ev = ev[ev["uid"].isin(set(subset))]
@@ -182,13 +186,15 @@ def run_metrics(rid, eval_split="test", thr_mode="mcc_cv", subset=None, results_
     return out
 
 
-def seed_spread(rid, eval_split="test", thr_mode="mcc_cv", results_dir=None):
-    """Per-seed AUC, as mean / std.
+def seed_spread(rid, eval_split="test", thr_mode="mcc_cv", results_dir=None, subset=None):
+    """Per-seed AUC, as mean / std (over the uids in `subset` when given).
 
     With a single seed the std is NaN, not 0: there is no spread to measure, and
     printing 0.0 would read as perfect stability.
     """
     preds = load_preds(rid, results_dir)
+    if subset is not None:
+        preds = preds[preds["uid"].isin(set(subset))]
     aucs = []
     for _, g in preds[preds["split"] == eval_split].groupby("seed"):
         r = metrics.ranking_metrics(g["y_true"], g["y_score"])
@@ -201,21 +207,24 @@ def seed_spread(rid, eval_split="test", thr_mode="mcc_cv", results_dir=None):
 
 
 def table(exp_id, eval_split="test", thr_mode="mcc_cv", label_col="label",
-          order_by=None, extra_cols=(), with_baseline=True, results_dir=None):
-    """Comparison table in the paper's column layout, rebuilt from stored predictions."""
+          order_by=None, extra_cols=(), with_baseline=True, results_dir=None, subset=None, thr_on=None):
+    """Comparison table in the paper's column layout, rebuilt from stored predictions.
+
+    `subset` / `thr_on` (uids): score only those test rows / fix the operating point on them (see `run_metrics`).
+    """
     runs = latest_per_label(load_runs(exp_id, results_dir), label_col)
     if runs.empty:
         return pd.DataFrame()
 
     rows = []
     for r in runs.to_dict("records"):   # dict, not itertuples: config columns contain dots
-        m = run_metrics(r["run_id"], eval_split, thr_mode, results_dir=results_dir)
+        m = run_metrics(r["run_id"], eval_split, thr_mode, subset=subset, thr_on=thr_on, results_dir=results_dir)
         if m is None:
             continue
         row = {label_col: r.get(label_col) or r["run_id"]}
         row.update({c: m[c] for c in metrics.PAPER_COLS})
         row.update({"PR_AUC": m["PR_AUC"], "F1": m["F1"], "Precision": m["Precision"]})
-        row.update(seed_spread(r["run_id"], eval_split, thr_mode, results_dir))
+        row.update(seed_spread(r["run_id"], eval_split, thr_mode, results_dir, subset=subset))
         for c in extra_cols:
             row[c] = r.get(c)
         row["_order"] = r.get("series_order", 10**9)
@@ -232,6 +241,8 @@ def table(exp_id, eval_split="test", thr_mode="mcc_cv", label_col="label",
         ev = preds[preds["split"] == eval_split]
         if not ev.empty:
             ev = ev.groupby("uid", as_index=False).agg(y_true=("y_true", "first"))
+            if subset is not None:
+                ev = ev[ev["uid"].isin(set(subset))]
             b = metrics.majority_baseline(ev["y_true"])
             base = {label_col: "all-negative baseline"}
             base.update({c: b[c] for c in metrics.PAPER_COLS})
@@ -241,7 +252,7 @@ def table(exp_id, eval_split="test", thr_mode="mcc_cv", label_col="label",
 
 
 def breakdown(rid, subsets, eval_split="test", thr_mode="mcc_cv", results_dir=None,
-              index_name="Dataset"):
+              index_name="Dataset", thr_on=None):
     """Re-evaluate one committed run on subsets of its predictions.
 
     `subsets` maps a row name to a collection of uids. Used for the MHC-I / MHC-II
@@ -249,7 +260,7 @@ def breakdown(rid, subsets, eval_split="test", thr_mode="mcc_cv", results_dir=No
     """
     rows = []
     for name, uids in subsets.items():
-        m = run_metrics(rid, eval_split, thr_mode, subset=uids, results_dir=results_dir)
+        m = run_metrics(rid, eval_split, thr_mode, subset=uids, thr_on=thr_on, results_dir=results_dir)
         if m is None:
             continue
         row = {index_name: name, "n": m["n"], "n_pos": m["n_pos"]}
@@ -274,8 +285,8 @@ def best_run(exp_id, eval_split="cv", thr_mode="mcc_cv", by="AUC", results_dir=N
     return best
 
 
-def roc(exp_id, eval_split="test", label_col="label", title=None, save=True, results_dir=None):
-    """ROC overlay, one curve per run, AUC in the legend."""
+def roc(exp_id, eval_split="test", label_col="label", title=None, save=True, results_dir=None, subset=None):
+    """ROC overlay, one curve per run, AUC in the legend (only the uids in `subset` when given)."""
     import matplotlib.pyplot as plt
 
     runs = latest_per_label(load_runs(exp_id, results_dir), label_col)
@@ -289,6 +300,8 @@ def roc(exp_id, eval_split="test", label_col="label", title=None, save=True, res
             continue
         ev = ev.groupby("uid", as_index=False).agg(y_true=("y_true", "first"),
                                                    y_score=("y_score", "mean"))
+        if subset is not None:
+            ev = ev[ev["uid"].isin(set(subset))]
         fpr, tpr, auc = metrics.roc_points(ev["y_true"], ev["y_score"])
         name = r.get(label_col) or r["run_id"]
         ax.plot(fpr, tpr, lw=1.8, label=f"{name} (AUC = {auc:.4f})")
@@ -304,6 +317,90 @@ def roc(exp_id, eval_split="test", label_col="label", title=None, save=True, res
     if save:
         fig.savefig(_dir("figs", results_dir) / f"{exp_id}_{eval_split}_roc.png", dpi=150)
     return fig
+
+
+def _ordered_runs(exp_id, label_col, results_dir):
+    runs = latest_per_label(load_runs(exp_id, results_dir), label_col)
+    if "series_order" in runs.columns:
+        runs = runs.sort_values("series_order")
+    return runs
+
+
+def by_set(exp_id, sets, thr_on=None, metric="AUC", label_col="label", eval_split="test", thr_mode="mcc_cv",
+           results_dir=None):
+    """One row per run, one column per evaluation set (`sets`: name -> uids): the cross-disease table.
+
+    The first row holds the number of positives of each set, so a small set is visible next to its score.
+    """
+    runs = _ordered_runs(exp_id, label_col, results_dir)
+    if runs.empty:
+        return pd.DataFrame()
+    rows, n_pos = [], {}
+    for r in runs.to_dict("records"):
+        row = {label_col: r.get(label_col) or r["run_id"]}
+        for name, uids in sets.items():
+            m = run_metrics(r["run_id"], eval_split, thr_mode, subset=uids, thr_on=thr_on, results_dir=results_dir)
+            row[name] = m[metric] if m else float("nan")
+            if m:
+                n_pos[name] = m["n_pos"]
+        rows.append(row)
+    head = {label_col: "n positives", **{k: n_pos.get(k, 0) for k in sets}}
+    return pd.concat([pd.DataFrame([head]), pd.DataFrame(rows)], ignore_index=True)
+
+
+def cluster_bootstrap(rid, groups, subset=None, n_boot=1000, seed=0, eval_split="test", results_dir=None):
+    """AUC and PR_AUC with a 95% CI that resamples whole clusters of similar peptides, not single peptides.
+
+    Peptides of one cluster are near-duplicates, so a peptide-level bootstrap understates the uncertainty.
+    `groups`: Series indexed by uid with the cluster id. Seeds are averaged per peptide first, as in `run_metrics`.
+    """
+    from sklearn.metrics import average_precision_score, roc_auc_score
+
+    preds = load_preds(rid, results_dir)
+    ev = preds[preds["split"] == eval_split].groupby("uid", as_index=False).agg(y_true=("y_true", "first"),
+                                                                                y_score=("y_score", "mean"))
+    if subset is not None:
+        ev = ev[ev["uid"].isin(set(subset))]
+    ev = ev.assign(g=ev["uid"].map(groups)).dropna(subset=["g"])
+    y, s = ev["y_true"].to_numpy().astype(int), ev["y_score"].to_numpy()
+    point = metrics.ranking_metrics(y, s)
+    members = list(ev.reset_index(drop=True).groupby("g").indices.values())
+    rng = np.random.default_rng(seed)
+    aucs, aps = [], []
+    for _ in range(n_boot):
+        idx = np.concatenate([members[i] for i in rng.integers(0, len(members), len(members))])
+        if len(np.unique(y[idx])) < 2:
+            continue
+        aucs.append(roc_auc_score(y[idx], s[idx]))
+        aps.append(average_precision_score(y[idx], s[idx]))
+    lo_hi = lambda v: (float(np.percentile(v, 2.5)), float(np.percentile(v, 97.5))) if v else (float("nan"),) * 2
+    (a_lo, a_hi), (p_lo, p_hi) = lo_hi(aucs), lo_hi(aps)
+    return {"AUC": point["AUC"], "AUC_lo": a_lo, "AUC_hi": a_hi, "PR_AUC": point["PR_AUC"], "PR_lo": p_lo, "PR_hi": p_hi,
+            "n": int(len(y)), "n_pos": int(y.sum()), "n_clusters": len(members)}
+
+
+def bootstrap_table(exp_id, groups, subset=None, n_boot=1000, label_col="label", eval_split="test", results_dir=None):
+    """`cluster_bootstrap` for every run of an experiment (one row per run)."""
+    runs = _ordered_runs(exp_id, label_col, results_dir)
+    rows = [{label_col: r.get(label_col) or r["run_id"],
+             **cluster_bootstrap(r["run_id"], groups, subset, n_boot, eval_split=eval_split, results_dir=results_dir)}
+            for r in runs.to_dict("records")]
+    return pd.DataFrame(rows)
+
+
+def report(exp_id, own, sets, extra_cols=(), cv=True):
+    """The three views of an experiment on a mixed test split (call from a notebook):
+    own test, 5-fold CV on train, and AUC on the other diseases. `own`: uids of the arm's own test; `sets`: name -> uids."""
+    from IPython.display import display
+
+    print(f"{exp_id} — own test (operating point fixed on the own test)")
+    display(fmt(table(exp_id, subset=own, thr_on=own, extra_cols=extra_cols)))
+    if cv:
+        print("5-fold cross-validation on train")
+        display(fmt(table(exp_id, eval_split="cv", extra_cols=extra_cols)))
+    print("AUC on other diseases (rows similar to train removed); first row = positives per set")
+    display(fmt(by_set(exp_id, sets, thr_on=own)))
+    roc(exp_id, subset=own, title=f"{exp_id} — own test")
 
 
 def fmt(t, decimals=4):

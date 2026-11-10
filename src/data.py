@@ -51,6 +51,8 @@ def meta(data_dir=None):
 def max_len(df, data_dir=None):
     """Padded length for the convolution. Prefers the build's MAX_LEN so the
     cache and the model agree even if the longest peptide was filtered out."""
+    if df.attrs.get("max_len"):          # frames loaded with their own length (pancancer_split.load_arm)
+        return int(df.attrs["max_len"])
     if "source" in df.columns and (df["source"] == "authors").all():
         return int(df["length"].max())   # meta.json describes the CEDAR build, not this dataset
     m = meta(data_dir).get("MAX_LEN")

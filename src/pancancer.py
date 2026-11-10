@@ -14,11 +14,12 @@ with several diseases); `disease_group` is the single group when unique, "multi"
 import datetime
 import json
 import re
+import warnings
 from pathlib import Path
 
 import pandas as pd
 
-from . import cedar_v2 as v2, lung
+from . import cedar_v2 as v2, config, lung
 
 DATASET_VERSION = "pancancer_v1"
 
@@ -114,22 +115,71 @@ def _write_meta(raw, path):
                         "viral": {**v2.LINEAR, "neoantigen_bool": "eq.0", "viral_antigen_bool": "eq.1"},
                         "taa": {**v2.LINEAR, "neoantigen_bool": "eq.0", "other_antigen_bool": "eq.1",
                                 "viral_antigen_bool": "eq.0", "tcell_ids": "not.is.null"}},
-            "disease_groups": DISEASE_GROUPS, "not_cancer_re": NOT_CANCER_RE}
+            "disease_groups": DISEASE_GROUPS, "not_cancer_re": NOT_CANCER_RE,
+            # the labelling rules above are applied at download time, so the code version belongs with the snapshot
+            "sha256": config.file_sha256(path), "git_sha": config.git_sha(), "tool_versions": config.tool_versions()}
     path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
 
 
-def get_raw(data_dir, refresh=False):
-    """Latest dated snapshot pancancer_cedar_raw_YYYYMMDD.csv in data_dir; downloads a new one if none or refresh."""
+def _new_path(data_dir):
+    """pancancer_cedar_raw_YYYYMMDD.csv, or _2, _3... when that day already has one (a snapshot is never overwritten)."""
+    stem = f"pancancer_cedar_raw_{datetime.date.today():%Y%m%d}"
+    path, n = data_dir / f"{stem}.csv", 1
+    while path.exists():
+        n += 1
+        path = data_dir / f"{stem}_{n}.csv"
+    return path
+
+
+def _snapshot_path(data_dir, snapshot):
+    """A snapshot given as a date ("20261110"), a file name, or a path."""
+    p = Path(str(snapshot))
+    if p.suffix != ".csv":
+        p = data_dir / f"pancancer_cedar_raw_{snapshot}.csv"
+    elif not p.is_absolute():
+        p = data_dir / p
+    if not p.exists():
+        raise FileNotFoundError(f"snapshot {p} not found; available: {[q.name for q in sorted(data_dir.glob('pancancer_cedar_raw_*.csv'))]}")
+    return p
+
+
+def _load_snapshot(path):
+    """Read a snapshot, check it against the checksum in its meta.json, and remember which file it came from."""
+    raw = pd.read_csv(path)
+    sha = config.file_sha256(path)
+    meta = path.with_suffix(".meta.json")
+    expected = json.loads(meta.read_text()).get("sha256") if meta.exists() else None
+    if expected and expected != sha:
+        warnings.warn(f"{path.name} does not match the checksum in its meta.json: it was modified after download")
+    raw.attrs.update(snapshot_file=path.name, snapshot_sha256=sha)     # copied into every dataset meta.json
+    return raw
+
+
+def get_raw(data_dir, refresh=False, snapshot=None):
+    """A dated snapshot pancancer_cedar_raw_YYYYMMDD[_n].csv in data_dir (CEDAR changes over time: the file IS the data).
+
+    snapshot: a date, file name or path that pins the exact snapshot a result was built from. None takes the latest and
+    warns when several exist, because a newer file would silently change the data. Downloads a new snapshot when none
+    exists or refresh=True; an existing file is never overwritten (a second download on the same day gets a _2 suffix).
+    """
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    if snapshot:
+        path = _snapshot_path(data_dir, snapshot)
+        print(f"using snapshot {path.name}")
+        return _load_snapshot(path)
     snapshots = sorted(data_dir.glob("pancancer_cedar_raw_*.csv"))
     if snapshots and not refresh:
+        if len(snapshots) > 1:
+            warnings.warn(f"{len(snapshots)} snapshots in {data_dir}; using the latest, {snapshots[-1].name}. "
+                          f"Pass snapshot=... to pin one: {[s.name for s in snapshots]}")
         print(f"using snapshot {snapshots[-1].name}")
-        return pd.read_csv(snapshots[-1])
+        return _load_snapshot(snapshots[-1])
     raw = download_raw()
-    path = data_dir / f"pancancer_cedar_raw_{datetime.date.today():%Y%m%d}.csv"
+    path = _new_path(data_dir)
     raw.to_csv(path, index=False)
     _write_meta(raw, path)
+    raw.attrs.update(snapshot_file=path.name, snapshot_sha256=config.file_sha256(path))
     print(f"downloaded {len(raw)} rows ({(raw['group'] == 'neo').sum()} neoantigens) -> {path.name}")
     return raw
 

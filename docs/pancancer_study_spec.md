@@ -55,3 +55,10 @@ peptides (`pancancer_split.write_main_arms`):
 - pooled: the three trains together, tested on the three tests (24:6 = 80:20), plus the other cancers as test rows.
 - Every test row carries `test_set` and `similar_to_train`; report on `~similar_to_train` and show the all-rows number
   beside it. All negatives are kept (`neg_ratio=None`); AUC is compared across diseases, prevalence is reported.
+
+## Similarity at 30%
+CD-HIT has an identity floor of 0.4 (the code asserts it). `pancancer_split.mmseqs_clusters` / `cluster_ids(method="mmseqs")`
+cluster with MMseqs2 (`easy-cluster --min-seq-id 0.3 -c 0.8 --cov-mode 1 -s 8`), and `mmseqs_filter` gives CD-HIT-style
+representatives for the paper-style pipeline. Use a new dataset name (e.g. `pancancer_cedar_v1_id30`); `meta.json` records
+`cluster_method`, `sim_id` and `cluster_kw`. MMseqs2 is less sensitive on 8-35 aa peptides, so confirm with
+`check_similarity` (independent, ungapped, a lower bound; not a proof of < 30%).

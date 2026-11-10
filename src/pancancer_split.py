@@ -22,7 +22,9 @@ Negatives (`neg_mode`): "exp" = experimentally tested, T cell negative neoantige
 """
 import datetime
 import json
+import os
 import shutil
+import subprocess
 import warnings
 from pathlib import Path
 
@@ -30,7 +32,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
-from . import cedar, config, data
+from . import cedar, config, data, lung_split
 
 CORE = ("melanoma", "colorectal", "lung")
 NOT_USED = ("multi",)               # peptides annotated with several cancers: in no arm
@@ -62,12 +64,53 @@ def build(raw, neg_mode="exp", min_len=8, max_len=35):
     return df, info
 
 
-def cluster_ids(df, work_dir, sim_id=0.4, method="auto"):
-    """(cluster id per row, method used). CD-HIT when installed (Colab: apt-get install cd-hit), else shared 8-mers.
+def mmseqs_clusters(df, work_dir, sim_id=0.3, cov=0.8, sensitivity=8.0, max_seqs=10000, threads=0, extra=()):
+    """Cluster ids from MMseqs2 `easy-cluster` (Colab: `apt-get install mmseqs2`; or conda -c bioconda mmseqs2).
+
+    Unlike CD-HIT (identity floor 0.4) it can cluster at 0.3. Short peptides need a sensitive prefilter, hence the
+    high `-s` and `--max-seqs`. `--cov-mode 1` asks the alignment to cover `cov` of the MEMBER, so a short peptide can
+    join a longer representative (like CD-HIT's identity over the shorter sequence); `cov-mode 0` would only join peptides
+    of similar length. Returns a Series of ints aligned to df.index.
+    """
+    exe = shutil.which("mmseqs")
+    if exe is None:
+        raise RuntimeError("mmseqs not found: apt-get install mmseqs2 (Colab) or conda install -c bioconda mmseqs2")
+    work = Path(work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    with open(work / "all.fa", "w") as f:
+        for r in df.itertuples():
+            f.write(f">{r.uid}\n{r.sequence}\n")
+    out, tmp = work / "mmseqs", work / "tmp"
+    cmd = [exe, "easy-cluster", str(work / "all.fa"), str(out), str(tmp), "--min-seq-id", str(sim_id), "-c", str(cov),
+           "--cov-mode", "1", "-s", str(sensitivity), "--max-seqs", str(max_seqs),
+           "--threads", str(threads or os.cpu_count() or 1), "-v", "1", *extra]
+    with open(work / "mmseqs.log", "w") as log:
+        subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=True)
+    tsv = pd.read_csv(f"{out}_cluster.tsv", sep="\t", header=None, names=["rep", "member"], dtype=str)
+    rep_id = {r: i for i, r in enumerate(sorted(tsv["rep"].unique()))}
+    cl = dict(zip(tsv["member"], tsv["rep"].map(rep_id)))
+    ids = df["uid"].astype(str).map(cl)
+    if ids.isna().any():
+        raise RuntimeError(f"{int(ids.isna().sum())} peptides missing from the MMseqs2 clusters (see {work / 'mmseqs.log'})")
+    return ids.astype(int)
+
+
+def mmseqs_filter(df, work_dir, sim_id=0.3, **kw):
+    """One representative per MMseqs2 cluster, positives first then longer: the CD-HIT-style filter for
+    `pancancer_dataset.make_paper_dataset(..., reduce=...)` (use `lambda d, w: mmseqs_filter(d, w, 0.3)`)."""
+    d = df.assign(_c=mmseqs_clusters(df, work_dir, sim_id, **kw).values)
+    return d.sort_values(["label", "length"], ascending=False, kind="stable").drop_duplicates("_c").drop(columns="_c")
+
+
+def cluster_ids(df, work_dir, sim_id=0.4, method="auto", **kw):
+    """(cluster id per row, method used). method: "cdhit" (identity >= 0.4), "mmseqs" (any identity, e.g. 0.3; `kw` goes
+    to `mmseqs_clusters`), "kmer8", or "auto" = CD-HIT when installed, else shared 8-mers.
 
     The 8-mer fallback only groups near-identical peptides, a weaker guarantee than CD-HIT 0.4: use it for a quick
     local check, not for the frozen dataset.
     """
+    if method == "mmseqs":
+        return mmseqs_clusters(df, work_dir, sim_id, **kw), "mmseqs"
     if method in ("auto", "cdhit") and shutil.which("cd-hit"):
         cedar.cdhit_filter(df, work_dir, sim_id=sim_id)
         cl = cedar.cdhit_clusters(work_dir)
@@ -94,10 +137,10 @@ def assign_folds(df, n_folds=5, seed=42):
 
 
 def make_dataset(raw, data_dir, work_dir, name="pancancer_cedar_v1", neg_mode="exp", n_folds=5, sim_id=0.4,
-                 min_len=8, max_len=35, seed=42, method="auto"):
+                 min_len=8, max_len=35, seed=42, method="auto", cluster_kw=None):
     """Build and write DATA_DIR/<name>/{manifest.csv, summary.csv, meta.json}. Returns (manifest, summary)."""
     df, info = build(raw, neg_mode, min_len, max_len)
-    df["cluster_id"], used = cluster_ids(df, Path(work_dir) / name, sim_id, method)
+    df["cluster_id"], used = cluster_ids(df, Path(work_dir) / name, sim_id, method, **(cluster_kw or {}))
     df["outer_fold"] = assign_folds(df, n_folds, seed)
     manifest = df.reindex(columns=KEEP)
     assert not manifest.groupby("cluster_id")["outer_fold"].apply(lambda f: f[f >= 0].nunique() > 1).any(), \
@@ -109,7 +152,7 @@ def make_dataset(raw, data_dir, work_dir, name="pancancer_cedar_v1", neg_mode="e
     summary.to_csv(out / "summary.csv", index=False)
     (out / "meta.json").write_text(json.dumps({
         "dataset_version": name, "neg_mode": neg_mode, "n_folds": n_folds, "sim_id": sim_id, "min_len": min_len,
-        "max_len": max_len, "seed": seed, "cluster_method": used, "core": CORE, "not_used": NOT_USED, **info,
+        "max_len": max_len, "seed": seed, "cluster_method": used, "cluster_kw": cluster_kw or {}, "core": CORE, "not_used": NOT_USED, **info,
         "snapshot_version": str(raw["dataset_version"].iloc[0]), "download_date": str(raw["download_date"].iloc[0]),
         "git_sha": config.git_sha(), "created": datetime.datetime.now().isoformat(timespec="seconds")}, indent=2))
     return manifest, summary
@@ -216,6 +259,15 @@ def eval_table(df, min_pos=50):
     t = pd.DataFrame(rows)
     t["reportable"] = (t["N+ clean"] >= min_pos) & (t["N- clean"] >= min_pos)
     return t.sort_values(["in_dist", "N+"], ascending=False).reset_index(drop=True)
+
+
+def check_similarity(df, sim_id=0.4):
+    """Independent screen of an arm frame, not based on the clustering tool: best ungapped identity of the clean test rows
+    to the training rows (`lung_split.max_identity`). A lower bound; `violations` should be 0 at the clustering threshold."""
+    tr = df[df["split"] == "train"]
+    te = df[(df["split"] == "test") & ~df["similar_to_train"]]
+    return pd.DataFrame([lung_split.cross_split_check(tr, te[te["in_dist"]], "train", "own test", sim_id),
+                         lung_split.cross_split_check(tr, te[~te["in_dist"]], "train", "other cancers", sim_id)])
 
 
 def test_set_name(d):

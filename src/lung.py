@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 from . import cedar, cedar_v2 as v2
 
@@ -25,7 +26,8 @@ LUNG_TERMS = ("lung non-small cell carcinoma", "lung squamous cell carcinoma", "
               "lung cancer", "lung adenocarcinoma", "lung small cell carcinoma", "adenosquamous lung carcinoma")
 LUNG_RE = r"lung|nsclc|sclc"
 NOT_CANCER_RE = r"fibrosis"
-EXTRA_ID_BASE = 9_000_000_000   # synthetic structure_id for rows not from CEDAR (never collides with CEDAR ids)
+DATASET_VERSION = "lung_v1"
+EXTRA_ID_BASE =9_000_000_000   # synthetic structure_id for rows not from CEDAR (never collides with CEDAR ids)
 EXTRA_COLS = ["sequence", "hla", "gene", "mutation", "disease", "source", "pubmed_id", "evidence"]
 
 
@@ -35,7 +37,8 @@ class LungPreset:
     pos_tcell: bool = True            # CEDAR positives need a T cell assay
     pos_positive: bool = True         # ... with a "Positive*" result
     extra_sources: tuple = ()         # names of files loaded with load_extra() to add as positives
-    neg_sources: tuple = ("viral", "taa")
+    neg_sources: tuple = ("viral", "taa")   # background negatives (guide: not experimental negatives)
+    exp_negative: bool = False        # also add lung neoantigens with only negative T cell results as class 0
     sim_id: float = 0.4
     min_len: int = 8
     max_len: int | None = 35
@@ -55,26 +58,53 @@ def discover_lung_terms():
     return sorted(n for n in names if re.search(LUNG_RE, n, re.I) and not re.search(NOT_CANCER_RE, n, re.I))
 
 
+def _fetch(filters, page=10000):
+    """Like cedar_v2._fetch but also selects the allele names (kept for provenance and later HLA-aware work)."""
+    rows, offset = [], 0
+    while True:
+        r = requests.get(cedar.API, params={**filters, "select": v2.COLS + ",mhc_allele_names", "order": "structure_id",
+                                            "limit": page, "offset": offset}, timeout=300)
+        r.raise_for_status()
+        chunk = r.json()
+        rows += chunk
+        if len(chunk) < page:
+            return pd.DataFrame(rows)
+        offset += page
+
+
 def download_raw():
     """Lung neoantigens + viral + TAA pools with the columns `cedar_v2` expects."""
     lung = "or=(" + ",".join(f"disease_names.cs.{{{t}}}" for t in LUNG_TERMS) + ")"
     # `_fetch` passes filters as params, so the `or` filter goes in as a key/value pair
-    pos = v2._fetch({**v2.LINEAR, "neoantigen_bool": "eq.1", "or": lung[3:]}).assign(label=1, group="neo")
-    viral = v2._fetch({**v2.LINEAR, "neoantigen_bool": "eq.0", "viral_antigen_bool": "eq.1"}).assign(label=0, group="viral")
-    taa = v2._fetch({**v2.LINEAR, "neoantigen_bool": "eq.0", "other_antigen_bool": "eq.1", "viral_antigen_bool": "eq.0",
-                     "tcell_ids": "not.is.null"}).assign(label=0, group="taa")
+    pos = _fetch({**v2.LINEAR, "neoantigen_bool": "eq.1", "or": lung[3:]}).assign(label=1, group="neo")
+    viral = _fetch({**v2.LINEAR, "neoantigen_bool": "eq.0", "viral_antigen_bool": "eq.1"}).assign(label=0, group="viral")
+    taa = _fetch({**v2.LINEAR, "neoantigen_bool": "eq.0", "other_antigen_bool": "eq.1", "viral_antigen_bool": "eq.0",
+                  "tcell_ids": "not.is.null"}).assign(label=0, group="taa")
     raw = pd.concat([pos, viral, taa], ignore_index=True)
     ls = lambda v: v if isinstance(v, list) else []
     raw["has_tcell"] = raw["tcell_ids"].notna()
     raw["has_positive"] = raw["qualitative_measures"].apply(lambda q: any(x.startswith("Positive") for x in ls(q)))
+    years = raw["reference_dates"].apply(lambda d: [int(y) for y in ls(d) if str(y).isdigit()])
+    raw["year_first"] = years.apply(lambda y: min(y) if y else 0)   # 0 = undated; never invented
+    raw["year_last"] = years.apply(lambda y: max(y) if y else 0)
     raw["has_mutation"] = raw["mutation"].notna()
     raw["structure_id"] = raw["structure_id"].astype(int)
-    for c in v2.LIST_COLS:
+    raw["accession"] = "CEDAR:" + raw["structure_id"].astype(str)
+    raw["download_date"] = f"{datetime.date.today():%Y-%m-%d}"
+    raw["dataset_version"] = DATASET_VERSION
+    # label tiers (guide step 4): experimental negatives are lung neoantigens tested by T cell assay with no positive
+    # result; lung neoantigens without any T cell assay are unknown (never turned into negatives)
+    neo = raw["group"] == "neo"
+    raw["tier"] = "unknown"
+    raw.loc[neo & raw["has_tcell"] & raw["has_positive"], "tier"] = "positive"
+    raw.loc[neo & raw["has_tcell"] & ~raw["has_positive"], "tier"] = "exp_negative"
+    raw.loc[raw["group"] == "viral", "tier"] = "bg_viral"
+    raw.loc[raw["group"] == "taa", "tier"] = "bg_taa"
+    for c in v2.LIST_COLS + ["mhc_allele_names"]:
         raw[c] = raw[c].apply(lambda v: ";".join(map(str, v)) if isinstance(v, list) else v)
     # safety net: keep lung positives only (drops anything non-cancer the `cs` match could let through)
-    is_pos = raw["group"] == "neo"
     ok = raw["disease_names"].fillna("").str.contains(LUNG_RE, case=False, regex=True)
-    return raw[~is_pos | ok].drop(columns=v2.ID_COLS).assign(source="cedar", evidence="validated").reset_index(drop=True)
+    return raw[~neo | ok].drop(columns=v2.ID_COLS).assign(source="cedar", evidence="validated").reset_index(drop=True)
 
 
 def get_raw(data_dir, refresh=False):
@@ -83,8 +113,11 @@ def get_raw(data_dir, refresh=False):
     data_dir.mkdir(parents=True, exist_ok=True)
     snapshots = sorted(data_dir.glob("lung_cedar_raw_*.csv"))
     if snapshots and not refresh:
-        print(f"using snapshot {snapshots[-1].name}")
-        return pd.read_csv(snapshots[-1])
+        raw = pd.read_csv(snapshots[-1])
+        if "tier" in raw.columns:
+            print(f"using snapshot {snapshots[-1].name}")
+            return raw
+        print(f"{snapshots[-1].name} predates the provenance columns (year_first, tier); downloading a new snapshot")
     raw = download_raw()
     path = data_dir / f"lung_cedar_raw_{datetime.date.today():%Y%m%d}.csv"
     raw.to_csv(path, index=False)
@@ -116,7 +149,7 @@ def add_extra(raw, extras):
         rows.append(pd.DataFrame({
             "structure_id": EXTRA_ID_BASE + len(raw) + sum(map(len, rows)) + e.index, "linear_sequence": e["sequence"],
             "label": 1, "group": "neo", "has_tcell": True, "has_positive": True, "has_mutation": False,
-            "disease_names": "lung cancer", "source": e["source"], "evidence": e["evidence"]}))
+            "tier": "positive", "year_first": 0, "year_last": 0, "disease_names": "lung cancer", "source": e["source"], "evidence": e["evidence"]}))
     return pd.concat([raw.assign(source="cedar", evidence="validated")] + rows, ignore_index=True) if rows \
         else raw.assign(source="cedar", evidence="validated")
 
@@ -131,12 +164,18 @@ def select(raw, p):
         cedar_pos &= raw["has_positive"]
     keep_pos = cedar_pos | (pos & raw["source"].isin(p.extra_sources))
     neg = raw["group"].isin(p.neg_sources) & (raw["has_tcell"] | (raw["group"] == "viral"))
-    return raw[keep_pos | neg]
+    exp_neg = (raw["tier"] == "exp_negative") & p.exp_negative
+    out = raw[(keep_pos & ~exp_neg) | neg | exp_neg].copy()
+    if p.exp_negative:
+        out.loc[out["tier"] == "exp_negative", "label"] = 0   # experimental negatives are class 0 (never positives)
+    return out
 
 
 def build(raw, p):
     """Cleaned one-row-per-sequence frame (before CD-HIT). Returns (df, info) incl. positives per source."""
     sel = select(raw, p)
+    # keep the earliest dated row of a sequence (undated last) so year_first is the first public evidence
+    sel = sel.assign(_y=sel["year_first"].where(sel["year_first"] > 0, 9999)).sort_values("_y", kind="stable").drop(columns="_y")
     sel = sel.assign(linear_sequence_length=sel["linear_sequence"].astype(str).str.len())
     df, info = cedar.build_initial(sel, require_positive_assay=False)
     df = df[(df["length"] >= p.min_len) | (df["label"] == 0)] if p.min_len else df

@@ -18,9 +18,11 @@ Question: do T-cell-validated neoantigen signals transfer between cancers?
 Arms: **CRC-only, melanoma-only, lung-only, pooled(3)**. Each is tested on (a) held-out part of each of the 3 diseases
 and (b) every other solid cancer with >= 100 positives, reported per disease, plus a combined "other solid" AUC.
 
-1. **Split by paper, then by CD-HIT cluster.** Negatives are concentrated in a few papers (CRC: 18 papers, the top one
-   holds 64% of its negatives), so a random split leaks study/batch effects. Use grouped k-fold (group = paper, with
-   clusters kept whole) and report mean +- sd; CRC has too few positives (~460) for one 20% test.
+1. **Split by CD-HIT cluster (0.4), 5 outer folds, one fold = the test.** Grouping by paper was tried and is
+   infeasible: rows cite several papers, so 83% of the core rows fall in ONE connected paper component. The paper
+   effect stays a risk (CRC negatives: top paper holds 62% of them), so `summary.csv` reports `paper_share` per disease
+   and a leave-top-paper-out sensitivity run is an open item. Report mean +- sd over the 5 outer folds; CRC has too few
+   positives (~465) for one 20% test.
 2. **Negatives: disease-matched experimental negatives are primary.** Viral/TAA negatives (the paper's choice) are kept as
    a secondary setting, because "virus vs human" is a shortcut that inflates cross-disease AUC. Report both.
 3. **Class prior differs a lot per disease** (CRC 462 / 8466, bladder 172 / 11). Compare with ROC-AUC, and report

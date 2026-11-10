@@ -37,3 +37,11 @@ and (b) every other solid cancer with >= 100 positives, reported per disease, pl
 - Merge or drop the `other` group (186 positives; mixed bag).
 - Whether to add hematologic as an extra OOD set.
 - Whether to use `year_first` temporal test (see `lung_split.py`) in addition to grouped folds.
+
+## Paper-style design (`src/pancancer_dataset.py`), the one requested for the experiments
+raw snapshot -> positive / negative (`exp_negative`) -> CD-HIT 0.4 once over all groups -> length <= 35 -> 80:20.
+- colorectal, lung, melanoma: each its own stratified 80:20 (5-fold CV on train in the runner).
+- pooled: train = the three trains, test = the three tests (24:6 is 80:20 by construction).
+- other cancers (and hematologic): test only, `test_set = other_<disease>`; report a disease only with >= 50 positives and negatives.
+- Cost: CD-HIT keeps one peptide per cluster, so positives drop a lot (paper: 671 -> 303); `table1_stages.csv` shows it.
+The cluster-fold arms (`pancancer_split.py`) remain as the alternative that keeps all peptides.

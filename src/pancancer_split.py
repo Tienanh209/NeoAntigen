@@ -52,7 +52,10 @@ def build(raw, neg_mode="exp", min_len=8, max_len=35):
     sel["label"] = pos[sel.index].astype(int)
     df, info = cedar.build_initial(sel, require_positive_assay=False)
     n0 = len(df)
-    df = df[(df["length"] >= min_len) & (df["length"] <= max_len)].reset_index(drop=True)
+    keep = df["length"] >= (min_len or 0)
+    if max_len:      # None: the caller filters the length itself (e.g. after CD-HIT)
+        keep &= df["length"] <= max_len
+    df = df[keep].reset_index(drop=True)
     info["length_dropped"] = n0 - len(df)
     df["role"] = np.select([df["disease_group"] == "background", df["disease_group"].isin(CORE),
                             df["disease_group"] == HEMATOLOGIC], ["bg", "core", "heme"], default="ood")

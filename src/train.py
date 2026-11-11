@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from . import metrics
+from . import config, metrics
 
 DEFAULTS = {
     "lr": 1e-3,
@@ -62,6 +62,34 @@ def predict(model, x, lengths, device, batch_size=256):
             xb, lb = _to_torch(x, lengths, sel, device)
             out[sel] = torch.sigmoid(model(xb, lb)).float().cpu().numpy()
     return out
+
+
+def _save_ckpt(state, ckpt_path, tries=3):
+    """Write the resume checkpoint; returns the path to keep using, or None to stop saving.
+
+    Drive's FUSE mount sometimes refuses a write ("open file failed w": stale folder after a delete, full quota, or a
+    dropped mount). The checkpoint only buys resumability, so a failure must not kill a long run: write to local scratch,
+    copy to Drive, retry, and after the last failure warn once and carry on without checkpoints.
+    """
+    import shutil
+    import time
+    ckpt_path = Path(ckpt_path)
+    tmp = Path(config.WORK_DIR) / "ckpt_tmp" / f"{abs(hash(str(ckpt_path)))}.pt"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(state, tmp)
+    for k in range(tries):
+        try:
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(tmp, ckpt_path)
+            tmp.unlink(missing_ok=True)
+            return ckpt_path
+        except OSError as e:
+            if k == tries - 1:
+                print(f"    !! cannot write checkpoint to {ckpt_path} ({e}); continuing without checkpoints. "
+                      f"Remount Drive (drive.mount(..., force_remount=True)) and check free space.")
+                tmp.unlink(missing_ok=True)
+                return None
+            time.sleep(2 * (k + 1))
 
 
 def fit(model, train_data, val_data, cfg=None, ckpt_path=None, device=None, verbose=False):
@@ -140,10 +168,9 @@ def fit(model, train_data, val_data, cfg=None, ckpt_path=None, device=None, verb
             print(f"    epoch {epoch:3d} loss {total/len(xtr):.4f} "
                   f"train_auc {tr_auc:.4f} val_auc {val_auc:.4f}")
         if ckpt_path:
-            Path(ckpt_path).parent.mkdir(parents=True, exist_ok=True)
-            torch.save({"epoch": epoch, "model": model.state_dict(), "optim": opt.state_dict(),
-                        "best_state": best_state, "best_auc": best_auc, "best_epoch": best_epoch,
-                        "bad": bad, "history": history}, ckpt_path)
+            ckpt_path = _save_ckpt({"epoch": epoch, "model": model.state_dict(), "optim": opt.state_dict(),
+                                    "best_state": best_state, "best_auc": best_auc, "best_epoch": best_epoch,
+                                    "bad": bad, "history": history}, ckpt_path)
         if bad >= cfg["patience"]:
             break
 
